@@ -92,3 +92,6 @@ def main(image_paths):
 # Example usage with dummy image paths
 # image_paths = ['frame1.jpg', 'frame2.jpg', 'frame3.jpg']
 # main(image_paths)
+
+
+# This is a test to see that push works
