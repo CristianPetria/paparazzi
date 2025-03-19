@@ -30,4 +30,6 @@
     <makefile target="ap|nps">
         <file name="mav_exercise.c"/>
     </makefile>
+
+<!--  -->
 </module>
