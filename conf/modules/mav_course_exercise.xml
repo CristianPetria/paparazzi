@@ -3,9 +3,31 @@
 <module name="mav_course_exercise">
   <doc>
     <description>
-    Exercise module for Autonomous Flight of MAV Course
+      Exercise module for Autonomous Flight of MAV Course
     </description>
+    <define name="MAV_EXERCISE_VISUAL_DETECTION_ID" value="ABI_BROADCAST" description="which VISUAL_DETECTION message to recieve for orange pole detection."/>
   </doc>
-  <depends>cv_detect_color_object</depends>
-  <!-- TODO Specify header, init, periodic, makefile sections  -->
+
+  <settings/>
+
+
+  <dep>
+    <depends>cv_detect_color_object</depends>
+  </dep>
+
+  <!-- Header files required for the module -->
+  <header>
+    <file name="mav_exercise.h"/>
+  </header>
+
+  <!-- Initialization code for the module -->
+  <init fun="mav_exercise_init()"/>
+
+  <!-- Periodic code for the module -->
+  <periodic fun="mav_exercise_periodic()" freq="4"/>
+
+  <!-- Makefile dependencies and compilation instructions -->
+    <makefile target="ap|nps">
+        <file name="mav_exercise.c"/>
+    </makefile>
 </module>

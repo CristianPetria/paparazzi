@@ -67,16 +67,26 @@ static void color_detection_cb(uint8_t __attribute__((unused)) sender_id,
 void mav_exercise_init(void) {
   // bind our colorfilter callbacks to receive the color filter outputs
   AbiBindMsgVISUAL_DETECTION(ORANGE_AVOIDER_VISUAL_DETECTION_ID, &color_detection_ev, color_detection_cb);
+
+  // Initialize with some movement to get started
+  navigation_state = SAFE;
+  obstacle_free_confidence = max_trajectory_confidence; // Start confident
+
+  // Initial movement - move the goal waypoint forward from current position
+  moveWaypointForward(WP_GOAL, moveDistance);
+  moveWaypointForward(WP_TRAJECTORY, 1.5f * moveDistance);
+
+  PRINT("Initialized and set initial waypoints\n");
 }
 
 void mav_exercise_periodic(void) {
   // only evaluate our state machine if we are flying
   if (!autopilot_in_flight()) {
+    PRINT("Not in flight\n");
     return;
   }
 
   // compute current color thresholds
-  // front_camera defined in airframe xml, with the video_capture module
   int32_t color_count_threshold = oa_color_count_frac * front_camera.output_size.w * front_camera.output_size.h;
 
   PRINT("Color_count: %d  threshold: %d state: %d \n", color_count, color_count_threshold, navigation_state);
@@ -91,8 +101,11 @@ void mav_exercise_periodic(void) {
   // bound obstacle_free_confidence
   Bound(obstacle_free_confidence, 0, max_trajectory_confidence);
 
+  PRINT("Obstacle free confidence: %d\n", obstacle_free_confidence);
+
   switch (navigation_state) {
     case SAFE:
+      PRINT("State: SAFE\n");
       moveWaypointForward(WP_TRAJECTORY, 1.5f * moveDistance);
       if (!InsideObstacleZone(WaypointX(WP_TRAJECTORY), WaypointY(WP_TRAJECTORY))) {
         navigation_state = OUT_OF_BOUNDS;
@@ -100,17 +113,27 @@ void mav_exercise_periodic(void) {
         navigation_state = OBSTACLE_FOUND;
       } else {
         moveWaypointForward(WP_GOAL, moveDistance);
+        PRINT("Moving forward, WP_GOAL at: %d, %d\n", WaypointX(WP_GOAL), WaypointY(WP_GOAL));
       }
       break;
     case OBSTACLE_FOUND:
-      // TODO Change behavior
+
+      PRINT("State: OBSTACLE_FOUND\n");
       // stop as soon as obstacle is found
       waypoint_move_here_2d(WP_GOAL);
       waypoint_move_here_2d(WP_TRAJECTORY);
 
-      navigation_state = HOLD;
+      // move 20 degrees and go in that direction
+      increase_nav_heading(40.0f);
+      moveWaypointForward(WP_TRAJECTORY, 1.5f * moveDistance);
+      moveWaypointForward(WP_GOAL, moveDistance); // Also move the goal waypoint
+
+      PRINT("Changed heading and moved waypoints\n");
+
+      navigation_state = SAFE;
       break;
     case OUT_OF_BOUNDS:
+      PRINT("State: OUT_OF_BOUNDS\n");
       // stop
       waypoint_move_here_2d(WP_GOAL);
       waypoint_move_here_2d(WP_TRAJECTORY);
@@ -126,10 +149,10 @@ void mav_exercise_periodic(void) {
       break;
     case HOLD:
     default:
+      PRINT("State: HOLD or DEFAULT\n");
       break;
   }
 }
-
 /*
  * Increases the NAV heading. Assumes heading is an INT32_ANGLE. It is bound in this function.
  */
