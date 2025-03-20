@@ -42,6 +42,7 @@ static uint8_t calculateForwards(struct EnuCoor_i *new_coor, float distanceMeter
 static uint8_t moveWaypoint(uint8_t waypoint, struct EnuCoor_i *new_coor);
 static uint8_t increase_nav_heading(float incrementDegrees);
 static uint8_t chooseRandomIncrementAvoidance(void);
+static uint32_t stuck_loop_counter = 0; // when we started being stuck
 
 enum navigation_state_t {
   SAFE,
@@ -59,6 +60,7 @@ enum navigation_state_t navigation_state = SEARCH_FOR_SAFE_HEADING;
 int32_t color_count = 0;                // orange color count from color filter for obstacle detection
 int16_t obstacle_free_confidence = 0;   // a measure of how certain we are that the way ahead is safe.
 int32_t stuck_state = 0;                // stuck state
+static const int stuck_threshold_cycles = 2;   // number of consecutive negative object detections to be sure we are stuck
 float heading_increment = 5.f;          // heading angle increment [deg]
 float maxDistance = 2.25;               // max waypoint displacement [m]
 
@@ -141,6 +143,10 @@ void orange_avoider_periodic(void)
         if (stuck_state > 3){
           VERBOSE_PRINT("Stuck state: %d, Confidence reset to 0\n", stuck_state);
           navigation_state = STUCK;
+          stuck_loop_counter = 0;
+          heading_increment = 20.f;
+      	  increase_nav_heading(heading_increment);
+
 
         }
         else {
@@ -169,17 +175,29 @@ void orange_avoider_periodic(void)
 
       VERBOSE_PRINT("SEARCH FOR SAFE HEADING", heading_increment);
       // make sure we have a couple of good readings before declaring the way safe
-      if (obstacle_free_confidence > 0){
+      if (obstacle_free_confidence >= 2){
         navigation_state = SAFE;
       }
 
       break;
     case STUCK:
 
-      heading_increment = 10.f;
+      if (stuck_loop_counter < stuck_threshold_cycles ){
+        stuck_loop_counter++;
+        return;
+        }
+//      increase_nav_heading(heading_increment);
+//      increase_nav_heading(heading_increment);
+//      increase_nav_heading(heading_increment);
+//      increase_nav_heading(heading_increment);
+//      increase_nav_heading(heading_increment);
+//      increase_nav_heading(heading_increment);
+//      increase_nav_heading(heading_increment);
+      heading_increment = 20.f;
       increase_nav_heading(heading_increment);
-//      increase_nav_heading(heading_increment);
-//      increase_nav_heading(heading_increment);
+
+      stuck_state = 0;
+      stuck_loop_counter = 0;
 
       navigation_state = SAFE;
       VERBOSE_PRINT("STUCK STATE, THE NAVIGATION STATE IS SET TO", navigation_state);
