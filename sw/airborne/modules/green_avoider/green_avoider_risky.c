@@ -42,7 +42,7 @@ static uint8_t calculateForwards(struct EnuCoor_i *new_coor, float distanceMeter
 static uint8_t moveWaypoint(uint8_t waypoint, struct EnuCoor_i *new_coor);
 static uint8_t increase_nav_heading(float incrementDegrees);
 static uint8_t chooseRandomIncrementAvoidance(void);
-static uint32_t stuck_loop_counter = 0; // when we started being stuck
+static int stuck_loop_counter = 0;
 
 enum navigation_state_t {
   SAFE,
@@ -60,7 +60,6 @@ enum navigation_state_t navigation_state = SEARCH_FOR_SAFE_HEADING;
 int32_t color_count = 0;                // orange color count from color filter for obstacle detection
 int16_t obstacle_free_confidence = 0;   // a measure of how certain we are that the way ahead is safe.
 int32_t stuck_state = 0;                // stuck state
-static const int stuck_threshold_cycles = 2;   // number of consecutive negative object detections to be sure we are stuck
 float heading_increment = 5.f;          // heading angle increment [deg]
 float maxDistance = 2.25;               // max waypoint displacement [m]
 
@@ -110,22 +109,23 @@ void orange_avoider_periodic(void)
 
   // compute current color thresholds
   int32_t color_count_threshold = oa_color_count_frac * front_camera.output_size.w * front_camera.output_size.h;
+  VERBOSE_PRINT("Obstacle free confidence: %d\n", obstacle_free_confidence);
 
-  VERBOSE_PRINT("Color_count: %d  threshold: %d state: %d \n", color_count, color_count_threshold, navigation_state);
+//  VERBOSE_PRINT("Color_count: %d  threshold: %d state: %d \n", color_count, color_count_threshold, navigation_state);
 
   // update our safe confidence using color threshold
   if(color_count >= color_count_threshold){
     obstacle_free_confidence++;
-    VERBOSE_PRINT("Green above 10000 but below threshold, decreasing confidence to %d\n", obstacle_free_confidence);
+    VERBOSE_PRINT("Green above threshold, increasing confidence to %d\n", obstacle_free_confidence);
 
   } else if (color_count < 10000){
-    VERBOSE_PRINT("Not enough green. Stuck state: %d, Confidence reset to 0\n", stuck_state);
     stuck_state += 1;
     obstacle_free_confidence = 0;
+    VERBOSE_PRINT("Not enough green. Stuck state: %d, Confidence reset to 0\n", stuck_state);
   }
   else{
-    VERBOSE_PRINT("Green above 10000 but below threshold, decreasing confidence to %d\n", obstacle_free_confidence);
     obstacle_free_confidence -= 2; // be more cautious with positive obstacle detections
+    VERBOSE_PRINT("Green above 10000 but below threshold, decreasing confidence to %d\n", obstacle_free_confidence);
   }
 
   // bound obstacle_free_confidence
@@ -139,20 +139,18 @@ void orange_avoider_periodic(void)
       moveWaypointForward(WP_TRAJECTORY, 1.5f * moveDistance);
       if (!InsideObstacleZone(WaypointX(WP_TRAJECTORY),WaypointY(WP_TRAJECTORY))){
         navigation_state = OUT_OF_BOUNDS;
-      } else if (obstacle_free_confidence == 0){
-        if (stuck_state > 3){
-          VERBOSE_PRINT("Stuck state: %d, Confidence reset to 0\n", stuck_state);
+      }
+      else if (obstacle_free_confidence == 0){
+        if (stuck_state > 0){
+          VERBOSE_PRINT("Stuck state: %d, Stuck reset to 0\n", stuck_state);
           navigation_state = STUCK;
-          stuck_loop_counter = 0;
-          heading_increment = 20.f;
-      	  increase_nav_heading(heading_increment);
-
 
         }
         else {
         navigation_state = OBSTACLE_FOUND;
       	}
-        } else {
+      }
+      else {
         moveWaypointForward(WP_GOAL, moveDistance);
         moveWaypointForward(WP_RETREAT, -1.0f * moveDistance);
       }
@@ -175,33 +173,25 @@ void orange_avoider_periodic(void)
 
       VERBOSE_PRINT("SEARCH FOR SAFE HEADING", heading_increment);
       // make sure we have a couple of good readings before declaring the way safe
-      if (obstacle_free_confidence >= 2){
+      if (obstacle_free_confidence > 0){
         navigation_state = SAFE;
       }
 
       break;
     case STUCK:
-
-      if (stuck_loop_counter < stuck_threshold_cycles ){
-        stuck_loop_counter++;
-        return;
-        }
-//      increase_nav_heading(heading_increment);
-//      increase_nav_heading(heading_increment);
-//      increase_nav_heading(heading_increment);
-//      increase_nav_heading(heading_increment);
-//      increase_nav_heading(heading_increment);
-//      increase_nav_heading(heading_increment);
-//      increase_nav_heading(heading_increment);
-      heading_increment = 20.f;
-      increase_nav_heading(heading_increment);
-
-      stuck_state = 0;
-      stuck_loop_counter = 0;
-
-      navigation_state = SAFE;
-      VERBOSE_PRINT("STUCK STATE, THE NAVIGATION STATE IS SET TO", navigation_state);
+      stuck_loop_counter++;
+      if (stuck_loop_counter <= 2) {
+        heading_increment = 15.f;
+        increase_nav_heading(heading_increment);
+        VERBOSE_PRINT("STUCK STATE ROTATION, INCREASING HEADING TO %f", heading_increment);
+        VERBOSE_PRINT("STUCK LOOP COUNTER: %d", stuck_loop_counter);
+        stuck_loop_counter = 0;
+        stuck_state = 0;
+        navigation_state = SAFE;
+        VERBOSE_PRINT("COMPLETED STUCK STATE ROTATION, RETURNING TO SAFE");
+      }
       break;
+
     case OUT_OF_BOUNDS:
       increase_nav_heading(heading_increment);
       moveWaypointForward(WP_TRAJECTORY, 1.5f);
@@ -262,7 +252,7 @@ uint8_t calculateForwards(struct EnuCoor_i *new_coor, float distanceMeters)
   // Now determine where to place the waypoint you want to go to
   new_coor->x = stateGetPositionEnu_i()->x + POS_BFP_OF_REAL(sinf(heading) * (distanceMeters));
   new_coor->y = stateGetPositionEnu_i()->y + POS_BFP_OF_REAL(cosf(heading) * (distanceMeters));
-  VERBOSE_PRINT("Calculated %f m forward position. x: %f  y: %f based on pos(%f, %f) and heading(%f)\n", distanceMeters,	
+  VERBOSE_PRINT("Calculated %f m forward position. x: %f  y: %f based on pos(%f, %f) and heading(%f)\n", distanceMeters,
                 POS_FLOAT_OF_BFP(new_coor->x), POS_FLOAT_OF_BFP(new_coor->y),
                 stateGetPositionEnu_f()->x, stateGetPositionEnu_f()->y, DegOfRad(heading));
   return false;
@@ -286,10 +276,10 @@ uint8_t chooseRandomIncrementAvoidance(void)
 {
   // Randomly choose CW or CCW avoiding direction
   if (rand() % 2 == 0) {
-    heading_increment = 30.f;
+    heading_increment = 12.f;
     VERBOSE_PRINT("Set avoidance increment to: %f\n", heading_increment);
   } else {
-    heading_increment = 30.f;
+    heading_increment = 12.f;
     VERBOSE_PRINT("Set avoidance increment to: %f\n", heading_increment);
   }
   return false;

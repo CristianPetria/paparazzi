@@ -1,149 +1,90 @@
-#include <opencv2/imgproc/imgproc_c.h>
-#include <opencv2/highgui/highgui_c.h>
-#include <opencv2/videoio/videoio_c.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <pthread.h>
+#include <string.h>
+#include <unistd.h>
+#include <stdint.h>
+#include "video_thread_nps.h"
+#include "paparazzi_uav.h"  // Assuming this exists for sending commands
 
-#define WIDTH 640
-#define HEIGHT 480
+#define FRAME_WIDTH  640
+#define FRAME_HEIGHT 480
+#define JITTER_AMOUNT 2  // Pixels to jitter
+#define FLOW_THRESHOLD 50  // Threshold for detecting high optical flow
+#define AVOIDANCE_ANGLE 15  // Degrees to turn when avoiding
 
-// Define FlowVector structure
-typedef struct {
-    float x;
-    float y;
-    float magnitude;
-    float angle;
-} FlowVector;
+uint8_t prev_frame[FRAME_HEIGHT][FRAME_WIDTH];  // Previous frame storage
 
-// Compute optical flow
-FlowVector* compute_optical_flow(IplImage* prev_gray, IplImage* gray) {
-    CvSize size = cvGetSize(gray);
-    CvMat* flow_x = cvCreateMat(size.height, size.width, CV_32FC1);
-    CvMat* flow_y = cvCreateMat(size.height, size.width, CV_32FC1);
+void compute_optical_flow(uint8_t current_frame[FRAME_HEIGHT][FRAME_WIDTH]) {
+    int high_flow_count = 0;
+    int flow_x = 0, flow_y = 0;
 
-    // Calculate optical flow using Lucas-Kanade method
-    cvCalcOpticalFlowLK(prev_gray, gray, cvSize(15, 15), flow_x, flow_y);
-
-    // Allocate memory for flow vectors
-    FlowVector* flow_vectors = (FlowVector*)malloc(size.width * size.height * sizeof(FlowVector));
-
-    // Fill flow vectors array
-    for (int y = 0; y < size.height; y++) {
-        for (int x = 0; x < size.width; x++) {
-            int idx = y * size.width + x;
-            float fx = cvmGet(flow_x, y, x);
-            float fy = cvmGet(flow_y, y, x);
-
-            flow_vectors[idx].x = fx;
-            flow_vectors[idx].y = fy;
-            flow_vectors[idx].magnitude = sqrtf(fx * fx + fy * fy);
-            flow_vectors[idx].angle = atan2f(fy, fx);
-        }
-    }
-
-    // Clean up
-    cvReleaseMat(&flow_x);
-    cvReleaseMat(&flow_y);
-
-    return flow_vectors;
-}
-
-// Create center-weighted mask
-float* create_center_mask(int w, int h) {
-    float* mask = (float*)malloc(w * h * sizeof(float));
-    float center_x = w / 2.0f;
-    float center_y = h / 2.0f;
-
-    for (int y = 0; y < h; y++) {
-        for (int x = 0; x < w; x++) {
-            float dx = x - center_x;
-            float dy = y - center_y;
-            float dist = dx * dx + dy * dy;
-            float max_dim = (float)h > (float)w ? (float)h : (float)w;
-            mask[y*w + x] = expf(-dist / max_dim);
-        }
-    }
-
-    return mask;
-}
-
-int main() {
-    // Initialize camera
-    CvCapture* cap = cvCreateCameraCapture(0);
-    if (!cap) {
-        fprintf(stderr, "Failed to open camera\n");
-        return -1;
-    }
-
-    // Set camera properties
-    cvSetCaptureProperty(cap, CV_CAP_PROP_FRAME_WIDTH, WIDTH);
-    cvSetCaptureProperty(cap, CV_CAP_PROP_FRAME_HEIGHT, HEIGHT);
-
-    // Get initial frame
-    IplImage* frame = cvQueryFrame(cap);
-    if (!frame) {
-        fprintf(stderr, "Failed to capture frame\n");
-        cvReleaseCapture(&cap);
-        return -1;
-    }
-
-    // Create grayscale images
-    IplImage* prev_gray = cvCreateImage(cvGetSize(frame), IPL_DEPTH_8U, 1);
-    IplImage* gray = cvCreateImage(cvGetSize(frame), IPL_DEPTH_8U, 1);
-
-    // Convert first frame to grayscale
-    cvCvtColor(frame, prev_gray, CV_BGR2GRAY);
-
-    // Create window
-    cvNamedWindow("Optical Flow", CV_WINDOW_AUTOSIZE);
-
-    // Main loop
-    while (1) {
-        // Capture new frame
-        frame = cvQueryFrame(cap);
-        if (!frame) break;
-
-        // Convert to grayscale
-        cvCvtColor(frame, gray, CV_BGR2GRAY);
-
-        // Compute optical flow
-        FlowVector* flow = compute_optical_flow(prev_gray, gray);
-
-        // Visualize flow
-        IplImage* flow_viz = cvCloneImage(frame);
-        CvSize size = cvGetSize(gray);
-
-        for (int y = 0; y < size.height; y += 10) {
-            for (int x = 0; x < size.width; x += 10) {
-                int idx = y * size.width + x;
-                if (flow[idx].magnitude > 0.5) {
-                    CvPoint p1 = cvPoint(x, y);
-                    CvPoint p2 = cvPoint(x + (int)(flow[idx].x * 5), y + (int)(flow[idx].y * 5));
-                    cvLine(flow_viz, p1, p2, CV_RGB(0, 255, 0), 1, CV_AA, 0);
-                }
+    for (int y = 1; y < FRAME_HEIGHT - 1; y++) {
+        for (int x = 1; x < FRAME_WIDTH - 1; x++) {
+            int flow = abs(current_frame[y][x] - prev_frame[y][x]);  // Compute pixel difference
+            if (flow > FLOW_THRESHOLD) {
+                high_flow_count++;
+                flow_x += x;
+                flow_y += y;
             }
         }
-
-        // Show result
-        cvShowImage("Optical Flow", flow_viz);
-
-        // Free resources
-        free(flow);
-        cvReleaseImage(&flow_viz);
-
-        // Copy current gray to previous
-        cvCopy(gray, prev_gray, NULL);
-
-        // Exit on 'q' key
-        if (cvWaitKey(10) == 'q') break;
     }
 
-    // Cleanup
-    cvReleaseImage(&prev_gray);
-    cvReleaseImage(&gray);
-    cvReleaseCapture(&cap);
-    cvDestroyWindow("Optical Flow");
+    if (high_flow_count > 100) {  // Detected significant motion
+        int avg_x = flow_x / high_flow_count;
+        int avg_y = flow_y / high_flow_count;
 
-    return 0;
+        // Determine turn direction
+        if (avg_x < FRAME_WIDTH / 2) {
+            printf("Avoiding left\n");
+            send_heading_change(-AVOIDANCE_ANGLE);  // Turn left
+        } else {
+            printf("Avoiding right\n");
+            send_heading_change(AVOIDANCE_ANGLE);  // Turn right
+        }
+    }
+
+    // Store current frame as previous frame
+    memcpy(prev_frame, current_frame, sizeof(prev_frame));
 }
+
+void jitter_frame(uint8_t frame[FRAME_HEIGHT][FRAME_WIDTH]) {
+    int shift_x = (rand() % (2 * JITTER_AMOUNT + 1)) - JITTER_AMOUNT;
+    int shift_y = (rand() % (2 * JITTER_AMOUNT + 1)) - JITTER_AMOUNT;
+
+    uint8_t temp_frame[FRAME_HEIGHT][FRAME_WIDTH];
+    memset(temp_frame, 0, sizeof(temp_frame));
+
+    for (int y = JITTER_AMOUNT; y < FRAME_HEIGHT - JITTER_AMOUNT; y++) {
+        for (int x = JITTER_AMOUNT; x < FRAME_WIDTH - JITTER_AMOUNT; x++) {
+            int new_x = x + shift_x;
+            int new_y = y + shift_y;
+            if (new_x >= 0 && new_x < FRAME_WIDTH && new_y >= 0 && new_y < FRAME_HEIGHT) {
+                temp_frame[new_y][new_x] = frame[y][x];
+            }
+        }
+    }
+    memcpy(frame, temp_frame, sizeof(temp_frame));
+}
+
+void video_thread_function(void *ptr) {
+    while (1) {
+        uint8_t frame[FRAME_HEIGHT][FRAME_WIDTH];
+
+        // Grab frame
+        video_grab_frame(frame);
+
+        // Jitter the frame
+        jitter_frame(frame);
+
+        // Compute optical flow
+        compute_optical_flow(frame);
+
+        // Send frame for visualization
+        viewvideo_send_frame(frame);
+
+        usleep(1000);  // Wait 1 ms before processing the next frame
+    }
+}
+can we try dis\

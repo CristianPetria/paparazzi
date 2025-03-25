@@ -109,21 +109,21 @@ void orange_avoider_periodic(void)
   // compute current color thresholds
   int32_t color_count_threshold = oa_color_count_frac * front_camera.output_size.w * front_camera.output_size.h;
 
-  VERBOSE_PRINT("Color_count: %d  threshold: %d state: %d \n", color_count, color_count_threshold, navigation_state);
-
+//  VERBOSE_PRINT("Color_count: %d  threshold: %d state: %d \n", color_count, color_count_threshold, navigation_state);
+  VERBOSE_PRINT("Obstacle free confidence: %d\n", obstacle_free_confidence);
   // update our safe confidence using color threshold
   if(color_count >= color_count_threshold){
-    obstacle_free_confidence++;
-    VERBOSE_PRINT("Green above 10000 but below threshold, decreasing confidence to %d\n", obstacle_free_confidence);
+    obstacle_free_confidence +=2;
+    VERBOSE_PRINT("Green above threshold, increasing confidence to %d\n", obstacle_free_confidence);
 
   } else if (color_count < 10000){
-    VERBOSE_PRINT("Not enough green. Stuck state: %d, Confidence reset to 0\n", stuck_state);
     stuck_state += 1;
     obstacle_free_confidence = 0;
   }
   else{
-    VERBOSE_PRINT("Green above 10000 but below threshold, decreasing confidence to %d\n", obstacle_free_confidence);
+
     obstacle_free_confidence -= 2; // be more cautious with positive obstacle detections
+    VERBOSE_PRINT("Green above 16000 but below threshold, decreasing confidence to %d\n", obstacle_free_confidence);
   }
 
   // bound obstacle_free_confidence
@@ -176,12 +176,14 @@ void orange_avoider_periodic(void)
       break;
     case STUCK:
 
-      heading_increment = 10.f;
+      heading_increment = 40.f;
       increase_nav_heading(heading_increment);
 //      increase_nav_heading(heading_increment);
 //      increase_nav_heading(heading_increment);
 
       navigation_state = SAFE;
+      stuck_state = 0;
+      obstacle_free_confidence = 0;
       VERBOSE_PRINT("STUCK STATE, THE NAVIGATION STATE IS SET TO", navigation_state);
       break;
     case OUT_OF_BOUNDS:
@@ -244,9 +246,9 @@ uint8_t calculateForwards(struct EnuCoor_i *new_coor, float distanceMeters)
   // Now determine where to place the waypoint you want to go to
   new_coor->x = stateGetPositionEnu_i()->x + POS_BFP_OF_REAL(sinf(heading) * (distanceMeters));
   new_coor->y = stateGetPositionEnu_i()->y + POS_BFP_OF_REAL(cosf(heading) * (distanceMeters));
-  VERBOSE_PRINT("Calculated %f m forward position. x: %f  y: %f based on pos(%f, %f) and heading(%f)\n", distanceMeters,	
-                POS_FLOAT_OF_BFP(new_coor->x), POS_FLOAT_OF_BFP(new_coor->y),
-                stateGetPositionEnu_f()->x, stateGetPositionEnu_f()->y, DegOfRad(heading));
+//  VERBOSE_PRINT("Calculated %f m forward position. x: %f  y: %f based on pos(%f, %f) and heading(%f)\n", distanceMeters,
+//                POS_FLOAT_OF_BFP(new_coor->x), POS_FLOAT_OF_BFP(new_coor->y),
+//                stateGetPositionEnu_f()->x, stateGetPositionEnu_f()->y, DegOfRad(heading));
   return false;
 }
 
@@ -255,8 +257,8 @@ uint8_t calculateForwards(struct EnuCoor_i *new_coor, float distanceMeters)
  */
 uint8_t moveWaypoint(uint8_t waypoint, struct EnuCoor_i *new_coor)
 {
-  VERBOSE_PRINT("Moving waypoint %d to x:%f y:%f\n", waypoint, POS_FLOAT_OF_BFP(new_coor->x),
-                POS_FLOAT_OF_BFP(new_coor->y));
+//  VERBOSE_PRINT("Moving waypoint %d to x:%f y:%f\n", waypoint, POS_FLOAT_OF_BFP(new_coor->x),
+//                POS_FLOAT_OF_BFP(new_coor->y));
   waypoint_move_xy_i(waypoint, new_coor->x, new_coor->y);
   return false;
 }
