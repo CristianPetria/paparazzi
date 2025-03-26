@@ -9,7 +9,6 @@
  * @author Roland Meertens
  * Example on how to use the colours detected to avoid orange pole in the cyberzoo
  */
-
 #ifndef ORANGE_AVOIDER_H
 #define ORANGE_AVOIDER_H
 
