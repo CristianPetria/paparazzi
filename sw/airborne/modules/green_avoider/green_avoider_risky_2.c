@@ -53,7 +53,7 @@ enum navigation_state_t {
   };
 
 // define settings
-float oa_color_count_frac = 0.16f;
+float oa_color_count_frac = 0.14f;
 
 // define and initialise global variables
 enum navigation_state_t navigation_state = SEARCH_FOR_SAFE_HEADING;
@@ -117,7 +117,7 @@ void orange_avoider_periodic(void)
     obstacle_free_confidence += 1;
     VERBOSE_PRINT("Green above threshold, increasing confidence to %d\n", obstacle_free_confidence);
 
-  } else if (color_count < 17000){
+  } else if (color_count < 12000){
     stuck_state += 1;
     obstacle_free_confidence = -6;
     VERBOSE_PRINT("Not enough green. Incrementing stuck state: %d", stuck_state, "Decreasing confidence to %d\n", obstacle_free_confidence);

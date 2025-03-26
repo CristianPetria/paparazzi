@@ -24,7 +24,6 @@
 #include "modules/core/abi.h"
 #include <time.h>
 #include <stdio.h>
-#include <unistd.h>
 
 #define NAV_C // needed to get the nav functions like Inside...
 #include "generated/flight_plan.h"
@@ -43,6 +42,7 @@ static uint8_t calculateForwards(struct EnuCoor_i *new_coor, float distanceMeter
 static uint8_t moveWaypoint(uint8_t waypoint, struct EnuCoor_i *new_coor);
 static uint8_t increase_nav_heading(float incrementDegrees);
 static uint8_t chooseRandomIncrementAvoidance(void);
+static int stuck_loop_counter = 0;
 
 enum navigation_state_t {
   SAFE,
@@ -53,12 +53,12 @@ enum navigation_state_t {
   };
 
 // define settings
-float oa_color_count_frac = 0.18f;
+float oa_color_count_frac = 0.16f;
 
 // define and initialise global variables
 enum navigation_state_t navigation_state = SEARCH_FOR_SAFE_HEADING;
 int32_t color_count = 0;                // orange color count from color filter for obstacle detection
-int obstacle_free_confidence = 0;   // a measure of how certain we are that the way ahead is safe.
+int16_t obstacle_free_confidence = 0;   // a measure of how certain we are that the way ahead is safe.
 int32_t stuck_state = 0;                // stuck state
 float heading_increment = 5.f;          // heading angle increment [deg]
 float maxDistance = 2.25;               // max waypoint displacement [m]
@@ -109,31 +109,30 @@ void orange_avoider_periodic(void)
 
   // compute current color thresholds
   int32_t color_count_threshold = oa_color_count_frac * front_camera.output_size.w * front_camera.output_size.h;
+ // VERBOSE_PRINT("Obstacle free confidence: %d\n", obstacle_free_confidence);
 
-  VERBOSE_PRINT("Color_count: %d  threshold: %d state: %d \n", color_count, color_count_threshold, navigation_state);
-  VERBOSE_PRINT("Obstacle free confidence: %d\n", obstacle_free_confidence);
+ VERBOSE_PRINT("Color_count: %d  threshold: %d state: %d \n", color_count, color_count_threshold, navigation_state);
+
   // update our safe confidence using color threshold
   if(color_count >= color_count_threshold){
-    obstacle_free_confidence += 1;
-    VERBOSE_PRINT("Green above threshold, increasing confidence to %d\n", obstacle_free_confidence);
+    obstacle_free_confidence++;
+    stuck_state = 0;
+  //  VERBOSE_PRINT("Green above threshold, increasing confidence to %d\n", obstacle_free_confidence);
 
-  }
-  else if (color_count < 11000){
+  } else if (color_count < 18000){
     stuck_state += 1;
-    obstacle_free_confidence = -3;
-    VERBOSE_PRINT("Not enough green. Incrementing stuck state: %d, Decreasing confidence to %d\n",
-                stuck_state, obstacle_free_confidence); // Fixed format string
+    obstacle_free_confidence = 0;
+  //  VERBOSE_PRINT("Not enough green. Stuck state: %d, Confidence reset to 0\n", stuck_state);
   }
   else{
-
-    obstacle_free_confidence -= 1; // be more cautious with positive obstacle detections
-    VERBOSE_PRINT("Green above 11000 but below threshold, decreasing confidence to %d\n", obstacle_free_confidence);
+    obstacle_free_confidence -= 2; // be more cautious with positive obstacle detections
+  //  VERBOSE_PRINT("Green above 10000 but below threshold, decreasing confidence to %d\n", obstacle_free_confidence);
   }
 
   // bound obstacle_free_confidence
-  Bound(obstacle_free_confidence, -5, max_trajectory_confidence);
+  Bound(obstacle_free_confidence, 0, max_trajectory_confidence);
 
-  float moveDistance = fminf(maxDistance, 1.0f);
+  float moveDistance = fminf(maxDistance, 0.5f);
 
   switch (navigation_state){
     case SAFE:
@@ -142,22 +141,17 @@ void orange_avoider_periodic(void)
       if (!InsideObstacleZone(WaypointX(WP_TRAJECTORY),WaypointY(WP_TRAJECTORY))){
         navigation_state = OUT_OF_BOUNDS;
       }
-      if (obstacle_free_confidence == 0) {
-    		navigation_state = OBSTACLE_FOUND;
-    		VERBOSE_PRINT("Transitioning to OBSTACLE_FOUND state. Stuck state: %d, Confidence: \n", stuck_state, obstacle_free_confidence);
-		}
-      else if(obstacle_free_confidence < 0){
-           if (stuck_state > 1){
-             navigation_state = STUCK;
-        	 VERBOSE_PRINT("Transitioning to STUCK state. Stuck state: %d, Confidence: %d\n", stuck_state, obstacle_free_confidence);
-
-           }
-           else{
-			VERBOSE_PRINT("I AM HEREEEEEEEEEEEEEEEEEEEEEEEEE\n");
-                navigation_state = OBSTACLE_FOUND;
-                obstacle_free_confidence = 0;
-           }
+      else if (obstacle_free_confidence == 0){
+        if (stuck_state > 1){
+    //      VERBOSE_PRINT("Stuck state: %d, Stuck reset to 0\n", stuck_state);
+          navigation_state = STUCK;
+		  VERBOSE_PRINT("Stuck detected\n");
         }
+        else {
+        navigation_state = OBSTACLE_FOUND;
+      //  VERBOSE_PRINT("Obstacle found state: %d\n", obstacle_free_confidence);
+      	}
+      }
       else {
         moveWaypointForward(WP_GOAL, moveDistance);
         moveWaypointForward(WP_RETREAT, -1.0f * moveDistance);
@@ -177,52 +171,33 @@ void orange_avoider_periodic(void)
 
       break;
     case SEARCH_FOR_SAFE_HEADING:
+      // stop
+      waypoint_move_here_2d(WP_GOAL);
+      waypoint_move_here_2d(WP_RETREAT);
+      waypoint_move_here_2d(WP_TRAJECTORY);
 
+      increase_nav_heading(heading_increment);
+
+      VERBOSE_PRINT("SEARCH FOR SAFE HEADING", heading_increment);
       // make sure we have a couple of good readings before declaring the way safe
       if (obstacle_free_confidence > 0){
         navigation_state = SAFE;
       }
-      else if (obstacle_free_confidence <= 0){
-        navigation_state = STUCK;
-      	VERBOSE_PRINT("Transitioning to STUCK STATE FROM SEARCH FOR SAFE HEADING. Stuck state: %d, Confidence: %d\n", stuck_state, obstacle_free_confidence);
-      }
-      if (navigation_state == SEARCH_FOR_SAFE_HEADING){
-        increase_nav_heading(heading_increment);
-        VERBOSE_PRINT("SEARCH FOR SAFE HEADING %d \n", heading_increment);
-      }
-
-
 
       break;
     case STUCK:
+      waypoint_move_here_2d(WP_GOAL);
+      waypoint_move_here_2d(WP_RETREAT);
+      waypoint_move_here_2d(WP_TRAJECTORY);
 
-      // Stop the drone
-     waypoint_move_here_2d(WP_GOAL);
-     waypoint_move_here_2d(WP_RETREAT);
-     waypoint_move_here_2d(WP_TRAJECTORY);
-     VERBOSE_PRINT("Drone stopped\n");
-
-      // Move backward to create distance from obstacle
-  	  moveWaypointForward(WP_TRAJECTORY, -0.4f);
-  	  moveWaypointForward(WP_GOAL, -0.4f);
-  	  moveWaypointForward(WP_RETREAT, +0.4f);
-  	  VERBOSE_PRINT("Backed up 0.7 meters\n");
-
-
-      // Wait briefly to ensure the move happens
-      //usleep(400000);
-      // Rotate
-      heading_increment = 40.f;
-      increase_nav_heading(heading_increment);
-      VERBOSE_PRINT("Rotated 40 degrees\n");
-
-      // Reset stuck state and confidence
-      stuck_state = (stuck_state < 3) ? stuck_state + 1 : 0;
-      obstacle_free_confidence = 2;
-      navigation_state = SAFE;
-      VERBOSE_PRINT("STUCK STATE, THE NAVIGATION STATE IS SET TO SAFE\n");
-
-     break;
+        heading_increment = 60.f;
+        increase_nav_heading(heading_increment);
+      VERBOSE_PRINT("STUCK STATE, INCREASING HEADING TO %f", heading_increment);
+      //  VERBOSE_PRINT("STUCK LOOP COUNTER: %d", stuck_loop_counter);
+       // stuck_state = 1;
+        navigation_state = SEARCH_FOR_SAFE_HEADING;
+       // VERBOSE_PRINT("COMPLETED STUCK STATE ROTATION, RETURNING TO SAFE");
+      break;
 
     case OUT_OF_BOUNDS:
       increase_nav_heading(heading_increment);
@@ -259,7 +234,7 @@ uint8_t increase_nav_heading(float incrementDegrees)
   // set heading, declared in firmwares/rotorcraft/navigation.h
   nav.heading = new_heading;
 
-  VERBOSE_PRINT("Increasing heading to %f\n", DegOfRad(new_heading));
+//  VERBOSE_PRINT("Increasing heading to %f\n", DegOfRad(new_heading));
   return false;
 }
 
@@ -297,7 +272,7 @@ uint8_t moveWaypoint(uint8_t waypoint, struct EnuCoor_i *new_coor)
 {
 //  VERBOSE_PRINT("Moving waypoint %d to x:%f y:%f\n", waypoint, POS_FLOAT_OF_BFP(new_coor->x),
 //                POS_FLOAT_OF_BFP(new_coor->y));
-  waypoint_move_xy_i(waypoint, new_coor->x, new_coor->y);
+waypoint_move_xy_i(waypoint, new_coor->x, new_coor->y);
   return false;
 }
 
@@ -307,9 +282,13 @@ uint8_t moveWaypoint(uint8_t waypoint, struct EnuCoor_i *new_coor)
 uint8_t chooseRandomIncrementAvoidance(void)
 {
   // Randomly choose CW or CCW avoiding direction
-    heading_increment = 30.f;
-
-
+  if (rand() % 2 == 0) {
+    heading_increment = 45.f;
+    //VERBOSE_PRINT("Set avoidance increment to: %f\n", heading_increment);
+  } else {
+    heading_increment = 35.f;
+    //VERBOSE_PRINT("Set avoidance increment to: %f\n", heading_increment);
+  }
   return false;
 }
 
