@@ -53,7 +53,7 @@ enum navigation_state_t {
   };
 
 // define settings
-float oa_color_count_frac = 0.18f;
+float oa_color_count_frac = 0.16f;
 
 // define and initialise global variables
 enum navigation_state_t navigation_state = SEARCH_FOR_SAFE_HEADING;
@@ -110,30 +110,28 @@ void orange_avoider_periodic(void)
   // compute current color thresholds
   int32_t color_count_threshold = oa_color_count_frac * front_camera.output_size.w * front_camera.output_size.h;
 
-  VERBOSE_PRINT("Color_count: %d  threshold: %d state: %d \n", color_count, color_count_threshold, navigation_state);
+//  VERBOSE_PRINT("Color_count: %d  threshold: %d state: %d \n", color_count, color_count_threshold, navigation_state);
   VERBOSE_PRINT("Obstacle free confidence: %d\n", obstacle_free_confidence);
   // update our safe confidence using color threshold
   if(color_count >= color_count_threshold){
     obstacle_free_confidence += 1;
     VERBOSE_PRINT("Green above threshold, increasing confidence to %d\n", obstacle_free_confidence);
 
-  }
-  else if (color_count < 11000){
+  } else if (color_count < 17000){
     stuck_state += 1;
-    obstacle_free_confidence = -3;
-    VERBOSE_PRINT("Not enough green. Incrementing stuck state: %d, Decreasing confidence to %d\n",
-                stuck_state, obstacle_free_confidence); // Fixed format string
+    obstacle_free_confidence = -6;
+    VERBOSE_PRINT("Not enough green. Incrementing stuck state: %d", stuck_state, "Decreasing confidence to %d\n", obstacle_free_confidence);
   }
   else{
 
-    obstacle_free_confidence -= 1; // be more cautious with positive obstacle detections
-    VERBOSE_PRINT("Green above 11000 but below threshold, decreasing confidence to %d\n", obstacle_free_confidence);
+    obstacle_free_confidence -= 2; // be more cautious with positive obstacle detections
+    VERBOSE_PRINT("Green above 16000 but below threshold, decreasing confidence to %d\n", obstacle_free_confidence);
   }
 
   // bound obstacle_free_confidence
   Bound(obstacle_free_confidence, -5, max_trajectory_confidence);
 
-  float moveDistance = fminf(maxDistance, 1.0f);
+  float moveDistance = fminf(maxDistance, 0.2f * (obstacle_free_confidence > 0 ? obstacle_free_confidence : 0));
 
   switch (navigation_state){
     case SAFE:
@@ -144,16 +142,15 @@ void orange_avoider_periodic(void)
       }
       if (obstacle_free_confidence == 0) {
     		navigation_state = OBSTACLE_FOUND;
-    		VERBOSE_PRINT("Transitioning to OBSTACLE_FOUND state. Stuck state: %d, Confidence: \n", stuck_state, obstacle_free_confidence);
+    		VERBOSE_PRINT("Transitioning to OBSTACLE_FOUND state. Stuck state: %d, Confidence: %d\n", stuck_state, obstacle_free_confidence);
 		}
       else if(obstacle_free_confidence < 0){
-           if (stuck_state > 1){
+           if (stuck_state > 0){
              navigation_state = STUCK;
         	 VERBOSE_PRINT("Transitioning to STUCK state. Stuck state: %d, Confidence: %d\n", stuck_state, obstacle_free_confidence);
 
            }
            else{
-			VERBOSE_PRINT("I AM HEREEEEEEEEEEEEEEEEEEEEEEEEE\n");
                 navigation_state = OBSTACLE_FOUND;
                 obstacle_free_confidence = 0;
            }
@@ -188,7 +185,7 @@ void orange_avoider_periodic(void)
       }
       if (navigation_state == SEARCH_FOR_SAFE_HEADING){
         increase_nav_heading(heading_increment);
-        VERBOSE_PRINT("SEARCH FOR SAFE HEADING %d \n", heading_increment);
+        VERBOSE_PRINT("SEARCH FOR SAFE HEADING", heading_increment);
       }
 
 
@@ -203,14 +200,14 @@ void orange_avoider_periodic(void)
      VERBOSE_PRINT("Drone stopped\n");
 
       // Move backward to create distance from obstacle
-  	  moveWaypointForward(WP_TRAJECTORY, -0.4f);
-  	  moveWaypointForward(WP_GOAL, -0.4f);
-  	  moveWaypointForward(WP_RETREAT, +0.4f);
-  	  VERBOSE_PRINT("Backed up 0.7 meters\n");
+  	  moveWaypointForward(WP_TRAJECTORY, -0.7f);
+  	  moveWaypointForward(WP_GOAL, -0.7f);
+  	  moveWaypointForward(WP_RETREAT, -0.7f);
+  	  VERBOSE_PRINT("Backed up 0.5 meters\n");
 
 
       // Wait briefly to ensure the move happens
-      //usleep(400000);
+      usleep(400000);
       // Rotate
       heading_increment = 40.f;
       increase_nav_heading(heading_increment);
@@ -218,7 +215,7 @@ void orange_avoider_periodic(void)
 
       // Reset stuck state and confidence
       stuck_state = (stuck_state < 3) ? stuck_state + 1 : 0;
-      obstacle_free_confidence = 2;
+      obstacle_free_confidence = 4;
       navigation_state = SAFE;
       VERBOSE_PRINT("STUCK STATE, THE NAVIGATION STATE IS SET TO SAFE\n");
 

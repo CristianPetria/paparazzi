@@ -216,10 +216,12 @@ void orange_avoider_periodic(void)
       increase_nav_heading(heading_increment);
       VERBOSE_PRINT("Rotated 40 degrees\n");
 
+
       // Reset stuck state and confidence
       stuck_state = (stuck_state < 3) ? stuck_state + 1 : 0;
-      obstacle_free_confidence = 2;
+      obstacle_free_confidence = 4;
       navigation_state = SAFE;
+	    usleep(400000);
       VERBOSE_PRINT("STUCK STATE, THE NAVIGATION STATE IS SET TO SAFE\n");
 
      break;
