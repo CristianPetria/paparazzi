@@ -74,6 +74,7 @@ bool cod_draw2 = false;
 struct color_object_t {
   int32_t x_c;
   int32_t y_c;
+  uint32_t cnt[3];
   uint32_t color_count;
   bool updated;
 };
@@ -211,14 +212,29 @@ uint32_t find_object_centroid(struct image_t *img, int32_t* p_xc, int32_t* p_yc,
                               uint8_t cb_min, uint8_t cb_max,
                               uint8_t cr_min, uint8_t cr_max)
 {
-  uint32_t cnt = 0;
+  uint32_t cnt[3] = {0, 0, 0}; // Top, middle, bottom segments
   uint32_t tot_x = 0;
   uint32_t tot_y = 0;
   uint8_t *buffer = img->buf;
 
+  // Calculate segment boundaries for horizontal segments
+  uint16_t segment_height = img->h / 3;
+  uint16_t segment1_end = segment_height;
+  uint16_t segment2_end = segment_height * 2;
+
   // Go through all the pixels
   for (uint16_t y = 0; y < img->h; y++) {
-    for (uint16_t x = 0; x < img->w; x ++) {
+    // Determine which segment this row belongs to
+    int segment;
+    if (y < segment1_end) {
+      segment = 0; // Top segment
+    } else if (y < segment2_end) {
+      segment = 1; // Middle segment
+    } else {
+      segment = 2; // Bottom segment
+    }
+
+    for (uint16_t x = 0; x < img->w; x++) {
       // Check if the color is inside the specified values
       uint8_t *yp, *up, *vp;
       if (x % 2 == 0) {
@@ -226,33 +242,67 @@ uint32_t find_object_centroid(struct image_t *img, int32_t* p_xc, int32_t* p_yc,
         up = &buffer[y * 2 * img->w + 2 * x];      // U
         yp = &buffer[y * 2 * img->w + 2 * x + 1];  // Y1
         vp = &buffer[y * 2 * img->w + 2 * x + 2];  // V
-        //yp = &buffer[y * 2 * img->w + 2 * x + 3]; // Y2
       } else {
         // Uneven x
         up = &buffer[y * 2 * img->w + 2 * x - 2];  // U
-        //yp = &buffer[y * 2 * img->w + 2 * x - 1]; // Y1
         vp = &buffer[y * 2 * img->w + 2 * x];      // V
         yp = &buffer[y * 2 * img->w + 2 * x + 1];  // Y2
       }
-      if ( (*yp >= lum_min) && (*yp <= lum_max) &&
-           (*up >= cb_min ) && (*up <= cb_max ) &&
-           (*vp >= cr_min ) && (*vp <= cr_max )) {
-        cnt ++;
+
+      if ((*yp >= lum_min) && (*yp <= lum_max) &&
+          (*up >= cb_min) && (*up <= cb_max) &&
+          (*vp >= cr_min) && (*vp <= cr_max)) {
+
+        cnt[segment]++;
         tot_x += x;
         tot_y += y;
-        if (draw){
-          *yp = 255;  // make pixel brighter in image
+
+        if (draw) {
+          // Color differently based on segment
+          if (segment == 0) {
+            // Top segment - blue
+            *yp = 81;
+            if (x % 2 == 0) {
+              *up = 240;  // U component for blue
+              *vp = 110;  // V component for blue
+            }
+          } else if (segment == 1) {
+            // Middle segment - yellow
+            *yp = 210;
+            if (x % 2 == 0) {
+              *up = 16;   // U component for yellow
+              *vp = 146;  // V component for yellow
+            }
+          } else {
+            // Bottom segment - red
+            *yp = 81;
+            if (x % 2 == 0) {
+              *up = 90;   // U component for red
+              *vp = 240;  // V component for red
+            }
+          }
         }
       }
     }
   }
-  if (cnt > 0) {
-    *p_xc = (int32_t)roundf(tot_x / ((float) cnt) - img->w * 0.5f);
-    *p_yc = (int32_t)roundf(img->h * 0.5f - tot_y / ((float) cnt));
+
+  // Calculate centroid
+  uint32_t total_cnt = cnt[0] + cnt[1] + cnt[2];
+  if (total_cnt > 0) {
+    *p_xc = (int32_t)roundf(tot_x / ((float) total_cnt) - img->w * 0.5f);
+    *p_yc = (int32_t)roundf(img->h * 0.5f - tot_y / ((float) total_cnt));
   } else {
     *p_xc = 0;
     *p_yc = 0;
   }
+
+  // Store segment counts in global structure
+  pthread_mutex_lock(&mutex);
+  global_filters[0].cnt[0] = cnt[0]; // Top
+  global_filters[0].cnt[1] = cnt[1]; // Middle
+  global_filters[0].cnt[2] = cnt[2]; // Bottom
+  pthread_mutex_unlock(&mutex);
+
   return cnt;
 }
 
@@ -265,12 +315,12 @@ void color_object_detector_periodic(void)
 
   if(local_filters[0].updated){
     AbiSendMsgVISUAL_DETECTION(COLOR_OBJECT_DETECTION1_ID, local_filters[0].x_c, local_filters[0].y_c,
-        0, 0, local_filters[0].color_count, 0);
+        local_filters[0].cnt[0], local_filters[0].cnt[1], local_filters[0].cnt[2], 0);
     local_filters[0].updated = false;
   }
   if(local_filters[1].updated){
     AbiSendMsgVISUAL_DETECTION(COLOR_OBJECT_DETECTION2_ID, local_filters[1].x_c, local_filters[1].y_c,
-        0, 0, local_filters[1].color_count, 1);
+        local_filters[1].cnt[0], local_filters[1].cnt[1], local_filters[1].cnt[2], 1);
     local_filters[1].updated = false;
   }
 }
