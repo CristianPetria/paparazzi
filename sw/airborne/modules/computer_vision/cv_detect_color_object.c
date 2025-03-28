@@ -74,7 +74,7 @@ bool cod_draw2 = false;
 struct color_object_t {
   int32_t x_c;
   int32_t y_c;
-  uint32_t cnt[3];
+  uint32_t cnt[6];
   uint32_t color_count;
   bool updated;
 };
@@ -212,29 +212,36 @@ uint32_t find_object_centroid(struct image_t *img, int32_t* p_xc, int32_t* p_yc,
                               uint8_t cb_min, uint8_t cb_max,
                               uint8_t cr_min, uint8_t cr_max)
 {
-  uint32_t cnt[3] = {0, 0, 0}; // Top, middle, bottom segments
+  uint32_t cnt[6] = {0, 0, 0, 0, 0, 0}; // 6 segments (2×3 grid)
   uint32_t tot_x = 0;
   uint32_t tot_y = 0;
   uint8_t *buffer = img->buf;
 
-  // Calculate segment boundaries for horizontal segments
-  uint16_t segment_height = img->h / 3;
-  uint16_t segment1_end = segment_height;
-  uint16_t segment2_end = segment_height * 2;
+  // Calculate segment boundaries correctly
+  uint16_t vertical_split = img->w * 0.5; // Split image width in half (left/right)
+  uint16_t horizontal_segment_height = img->h / 3; // Divide height into 3 segments (top/mid/bottom)
 
   // Go through all the pixels
   for (uint16_t y = 0; y < img->h; y++) {
-    // Determine which segment this row belongs to
-    int segment;
-    if (y < segment1_end) {
-      segment = 0; // Top segment
-    } else if (y < segment2_end) {
-      segment = 1; // Middle segment
+    // Determine horizontal segment (0=top, 1=middle, 2=bottom)
+    int horizontal_segment;
+    if (y < horizontal_segment_height) {
+      horizontal_segment = 0; // Top segment
+    } else if (y < horizontal_segment_height * 2) {
+      horizontal_segment = 1; // Middle segment
     } else {
-      segment = 2; // Bottom segment
+      horizontal_segment = 2; // Bottom segment
     }
 
     for (uint16_t x = 0; x < img->w; x++) {
+      // Determine if this is left or right side
+      bool is_left = (x < vertical_split);
+
+      // Calculate segment index (0-5)
+      // 0,1,2 = left top, left middle, left bottom
+      // 3,4,5 = right top, right middle, right bottom
+      int segment = is_left ? horizontal_segment : horizontal_segment + 3;
+
       // Check if the color is inside the specified values
       uint8_t *yp, *up, *vp;
       if (x % 2 == 0) {
@@ -259,23 +266,23 @@ uint32_t find_object_centroid(struct image_t *img, int32_t* p_xc, int32_t* p_yc,
 
         if (draw) {
           // Color differently based on segment
-          if (segment == 0) {
-            // Top segment - blue
-            *yp = 81;
+          if (horizontal_segment == 0) {
+            // Top segment - blue (brighter on left side)
+            *yp = is_left ? 120 : 60; // Adjust brightness
             if (x % 2 == 0) {
               *up = 240;  // U component for blue
               *vp = 110;  // V component for blue
             }
-          } else if (segment == 1) {
-            // Middle segment - yellow
-            *yp = 210;
+          } else if (horizontal_segment == 1) {
+            // Middle segment - yellow (brighter on left side)
+            *yp = is_left ? 240 : 180; // Adjust brightness
             if (x % 2 == 0) {
               *up = 16;   // U component for yellow
               *vp = 146;  // V component for yellow
             }
           } else {
-            // Bottom segment - red
-            *yp = 81;
+            // Bottom segment - red (brighter on left side)
+            *yp = is_left ? 120 : 60; // Adjust brightness
             if (x % 2 == 0) {
               *up = 90;   // U component for red
               *vp = 240;  // V component for red
@@ -287,7 +294,7 @@ uint32_t find_object_centroid(struct image_t *img, int32_t* p_xc, int32_t* p_yc,
   }
 
   // Calculate centroid
-  uint32_t total_cnt = cnt[0] + cnt[1] + cnt[2];
+  uint32_t total_cnt = cnt[0] + cnt[1] + cnt[2] + cnt[3] + cnt[4] + cnt[5];
   if (total_cnt > 0) {
     *p_xc = (int32_t)roundf(tot_x / ((float) total_cnt) - img->w * 0.5f);
     *p_yc = (int32_t)roundf(img->h * 0.5f - tot_y / ((float) total_cnt));
@@ -296,14 +303,14 @@ uint32_t find_object_centroid(struct image_t *img, int32_t* p_xc, int32_t* p_yc,
     *p_yc = 0;
   }
 
-  // Store segment counts in global structure
+ // Store all 6 segment counts in global structure
   pthread_mutex_lock(&mutex);
-  global_filters[0].cnt[0] = cnt[0]; // Top
-  global_filters[0].cnt[1] = cnt[1]; // Middle
-  global_filters[0].cnt[2] = cnt[2]; // Bottom
+  for (int i = 0; i < 6; i++) {
+    global_filters[0].cnt[i] = cnt[i];
+  }
   pthread_mutex_unlock(&mutex);
 
-  return cnt;
+  return total_cnt;
 }
 
 void color_object_detector_periodic(void)
@@ -314,13 +321,18 @@ void color_object_detector_periodic(void)
   pthread_mutex_unlock(&mutex);
 
   if(local_filters[0].updated){
-    AbiSendMsgVISUAL_DETECTION(COLOR_OBJECT_DETECTION1_ID, local_filters[0].x_c, local_filters[0].y_c,
-        local_filters[0].cnt[0], local_filters[0].cnt[1], local_filters[0].cnt[2], 0);
+
+   // In cv_detect_color_object.c (find_object_centroid function or similar)
+AbiSendMsgVISUAL_DETECTION(COLOR_OBJECT_DETECTION1_ID, local_filters[0].cnt[0], local_filters[0].cnt[1],
+                           local_filters[0].cnt[2], local_filters[0].cnt[3], local_filters[0].cnt[4], local_filters[0].cnt[5]);
     local_filters[0].updated = false;
   }
+
   if(local_filters[1].updated){
-    AbiSendMsgVISUAL_DETECTION(COLOR_OBJECT_DETECTION2_ID, local_filters[1].x_c, local_filters[1].y_c,
-        local_filters[1].cnt[0], local_filters[1].cnt[1], local_filters[1].cnt[2], 1);
+
+    // In cv_detect_color_object.c (find_object_centroid function or similar)
+AbiSendMsgVISUAL_DETECTION(COLOR_OBJECT_DETECTION2_ID, local_filters[1].cnt[0], local_filters[1].cnt[1],
+                           local_filters[1].cnt[2], local_filters[1].cnt[3], local_filters[1].cnt[4], local_filters[1].cnt[5]);
     local_filters[1].updated = false;
   }
 }
